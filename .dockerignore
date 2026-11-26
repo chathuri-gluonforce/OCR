@@ -2,5 +2,7 @@
 .git
 __pycache__
 *.pyc
+*.pdiparams
+paddle_models/**/.cache/
 .env
 .DS_Store

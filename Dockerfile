@@ -26,10 +26,10 @@ RUN uv sync --frozen --no-dev --no-install-project
 # Copy application code
 COPY app ./app
 
-# Copy downloaded PaddleOCR models
+# Copy model metadata; weights are downloaded into the cache when the app starts
 COPY paddle_models ./paddle_models
 
-# Use the bundled OCR models
+# Store downloaded model weights in the model directory
 ENV PADDLE_PDX_CACHE_HOME=/app/paddle_models
 
 # Start FastAPI

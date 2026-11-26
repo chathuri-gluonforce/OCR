@@ -1,78 +1,61 @@
-
+import json
+import os
+import threading
+from functools import lru_cache
 from pathlib import Path
 
-from paddleocr import PaddleOCR
+APP_ROOT = Path(os.getenv("APP_ROOT", Path(__file__).resolve().parents[2]))
+
+# Must be set before paddleocr is imported.
+os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(APP_ROOT / "paddle_models"))
+
+_lock = threading.Lock()
 
 
-MODEL_ROOT = (
-    Path(__file__).resolve().parents[2]
-    / "paddle_models"
-    / "official_models"
-)
+@lru_cache(maxsize=1)
+def get_ocr():
+    from paddleocr import PaddleOCR  # imported lazily, after the env is set
 
-ocr = PaddleOCR(
-    lang="en",
-    device="cpu",
-    enable_mkldnn=False,
-    use_doc_orientation_classify=False,
-    use_doc_unwarping=False,
-    use_textline_orientation=False,
-    text_detection_model_dir=str(MODEL_ROOT / "PP-OCRv6_medium_det"),
-    text_recognition_model_dir=str(MODEL_ROOT / "PP-OCRv6_medium_rec"),
-)
+    return PaddleOCR(
+        device="cpu",
+        enable_mkldnn=False,
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+        text_detection_model_name="PP-OCRv6_medium_det",
+        text_recognition_model_name="PP-OCRv6_medium_rec",
+    )
 
-def extract_text(file_path: str):
-    results = ocr.predict(input=file_path)
 
-    pages = []
-    all_text = []
+def _to_list(value):
+    return value.tolist() if hasattr(value, "tolist") else list(value)
 
+
+def extract_text(file_path: str) -> dict:
+    with _lock:
+        results = list(get_ocr().predict(input=file_path))
+
+    pages, all_text = [], []
     for page_number, result in enumerate(results, start=1):
         data = result.json
-
         if isinstance(data, str):
-            import json
             data = json.loads(data)
+        page = data.get("res", data)
 
-        page_data = data.get("res", data)
-        #print("Available fields:", page_data.keys())
-        #print("Sample texts:", page_data.get("rec_texts", [])[:5])
-        #print("Sample scores:", page_data.get("rec_scores", [])[:5])
-        # print("Sample boxes:", page_data.get("rec_boxes", [])[:5])
+        texts = page.get("rec_texts", [])
+        scores = page.get("rec_scores", [])
+        boxes = page.get("rec_boxes", [])
 
-        
-        texts = page_data.get("rec_texts", [])
-        scores = page_data.get("rec_scores", [])
-        boxes = page_data.get("rec_boxes", [])
-
-        lines = []
-
-        for index, text in enumerate(texts):
-            confidence = (
-                float(scores[index])
-                if index < len(scores)
-                else None
-            )
-
-            bounding_box = (
-                boxes[index].tolist()
-                if hasattr(boxes[index], "tolist")
-                else list(boxes[index])
-            ) if index < len(boxes) else None
-
-            lines.append({
+        lines = [
+            {
                 "text": text,
-                "confidence": confidence,
-                "bounding_box": bounding_box,
-            })
-
+                "confidence": float(scores[i]) if i < len(scores) else None,
+                "bounding_box": _to_list(boxes[i]) if i < len(boxes) else None,
+            }
+            for i, text in enumerate(texts)
+        ]
         all_text.extend(texts)
-
-        pages.append({
-            "page": page_number,
-            "lines": lines,
-        })
-
+        pages.append({"page": page_number, "lines": lines})
 
     return {
         "total_pages": len(pages),
